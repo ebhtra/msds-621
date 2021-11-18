@@ -1,0 +1,233 @@
+---
+title: "kNN imputation"
+author: "eh"
+date: "11/17/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r reading data}
+ins_train_df <- read.csv("https://raw.githubusercontent.com/johnm1990/msds-621/main/insurance_training_data.csv")
+ins_eval_df <- read.csv("https://raw.githubusercontent.com/johnm1990/msds-621/main/insurance-evaluation-data.csv")
+```
+
+# What do zeros and blanks and NA's have to do with each other?
+
+```{r}
+sum(ins_train_df$HOME_VAL == "$0")
+sum(ins_train_df$HOME_VAL == '')
+```
+
+```{r}
+sum(ins_train_df$INCOME == "$0")
+sum(ins_train_df$INCOME == '')
+```
+
+```{r}
+sum(!is.na(ins_train_df$YOJ) & ins_train_df$YOJ == 0.0)
+sum(is.na(ins_train_df$YOJ))
+```
+
+```{r}
+sum(ins_train_df$JOB == '')
+```
+
+```{r}
+sum(ins_train_df$BLUEBOOK == "$0")
+sum(ins_train_df$BLUEBOOK == '')
+```
+
+```{r}
+sum(ins_train_df$OLDCLAIM == "$0")
+sum(ins_train_df$OLDCLAIM == '')
+```
+
+```{r}
+sum((ins_train_df$JOB == '') & (is.na(ins_train_df$YOJ)))
+```
+
+```{r}
+sum((ins_train_df$JOB == '') & (!is.na(ins_train_df$YOJ) & ins_train_df$YOJ == 0.0))
+```
+
+**Only 31 of 526 blank fields for JOB align with NA or 0.0 for YOJ**
+
+```{r}
+sum((ins_train_df$INCOME == '') & (ins_train_df$JOB == ''))
+```
+
+```{r}
+sum((ins_train_df$INCOME == "$0") & (ins_train_df$JOB == ''))
+```
+
+```{r}
+sum((ins_train_df$INCOME == "$0") & (is.na(ins_train_df$YOJ)))
+```
+
+```{r}
+sum((ins_train_df$INCOME == '') & (is.na(ins_train_df$YOJ)))
+```
+
+```{r}
+sum((ins_train_df$INCOME == '') & (!is.na(ins_train_df$YOJ) & ins_train_df$YOJ == 0.0))
+```
+
+```{r}
+sum((ins_train_df$INCOME == '$0') & (!is.na(ins_train_df$YOJ) & ins_train_df$YOJ == 0.0))
+```
+
+So most INCOME == '$0' is YOJ == 0.0, and half of them are home makers, the other half students.
+
+```{r}
+unemp = ins_train_df[((ins_train_df$INCOME == '$0') & (!is.na(ins_train_df$YOJ) & ins_train_df$YOJ == 0.0)),]
+head(unemp)
+mean(unemp$JOB=='Home Maker' | unemp$JOB=='Student')
+```
+
+```{r}
+yojna = ins_train_df[is.na(ins_train_df$YOJ),]
+mean(yojna$HOME_VAL=='')
+mean(yojna$INCOME=='')
+mean(yojna$JOB=='')
+```
+
+### Parse numbers from strings  
+
+```{r}
+dollars <- function(n){
+  as.integer(str_remove_all(n, '[,$]')) 
+}
+dollars(ins_train_df$INCOME[1:11])
+```
+
+```{r}
+yojna$INCOME = dollars(yojna$INCOME)
+hist(yojna$INCOME)
+```
+
+NA's in YOJ are not a stand-in for unemployment.
+
+Blanks in HOME_VAL and INCOME and JOB maybe similarly shouldn't be treated as 0's or unemployed or whatever, but rather NA's.  
+Even if HOME_VAL == "" meant that someone rents instead of owns, setting HOME_VAL to 0 would create a false ordering with other home values.
+
+```{r}
+ins_train_df$INCOME = dollars(ins_train_df$INCOME)
+ins_eval_df$INCOME = dollars(ins_eval_df$INCOME)
+ins_train_df$HOME_VAL = dollars(ins_train_df$HOME_VAL)
+ins_eval_df$HOME_VAL = dollars(ins_eval_df$HOME_VAL)
+ins_train_df$JOB[ins_train_df$JOB==''] = NA
+ins_eval_df$JOB[ins_eval_df$JOB==''] = NA
+```
+
+```{r}
+table(ins_train_df$JOB)
+sum(is.na(ins_train_df$JOB))
+```
+
+```{r}
+hist(ins_train_df$INCOME)
+```
+
+```{r}
+hist(ins_train_df$HOME_VAL)
+```
+
+```{r}
+ins_train_df$OLDCLAIM = dollars(ins_train_df$OLDCLAIM)
+ins_eval_df$OLDCLAIM = dollars(ins_eval_df$OLDCLAIM)
+ins_train_df$BLUEBOOK = dollars(ins_train_df$BLUEBOOK)
+ins_eval_df$BLUEBOOK = dollars(ins_eval_df$BLUEBOOK)
+```
+
+#### Turn boolean strings into booleans
+
+```{r}
+ins_train_df$REVOKED = tolower(ins_train_df$REVOKED)=='yes'
+ins_eval_df$REVOKED = tolower(ins_eval_df$REVOKED)=='yes'
+ins_train_df$PARENT1 = tolower(ins_train_df$PARENT1)=='yes'
+ins_eval_df$PARENT1 = tolower(ins_eval_df$PARENT1)=='yes'
+ins_train_df$RED_CAR = tolower(ins_train_df$RED_CAR)=='yes'
+ins_eval_df$RED_CAR = tolower(ins_eval_df$RED_CAR)=='yes'
+ins_train_df$MSTATUS = tolower(ins_train_df$MSTATUS)=='yes'
+ins_eval_df$MSTATUS = tolower(ins_eval_df$MSTATUS)=='yes'
+```
+
+#### Turn unordered categorical strings into unordered factors
+
+```{r}
+ins_eval_df$SEX <- factor(ins_eval_df$SEX)
+ins_train_df$SEX <- factor(ins_train_df$SEX)
+ins_eval_df$JOB <- factor(ins_eval_df$JOB)
+ins_train_df$JOB <- factor(ins_train_df$JOB)
+ins_eval_df$CAR_USE <- factor(ins_eval_df$CAR_USE)
+ins_train_df$CAR_USE <- factor(ins_train_df$CAR_USE)
+ins_eval_df$CAR_TYPE <- factor(ins_eval_df$CAR_TYPE)
+ins_train_df$CAR_TYPE <- factor(ins_train_df$CAR_TYPE)
+ins_eval_df$URBANICITY <- factor(ins_eval_df$URBANICITY)
+ins_train_df$URBANICITY <- factor(ins_train_df$URBANICITY)
+```
+
+#### Turn ordered categorical strings into ordered factors
+
+```{r}
+unique(ins_train_df$EDUCATION)
+```
+
+```{r}
+ins_eval_df$EDUCATION <- factor(ins_eval_df$EDUCATION,
+                                   levels = c("<High School", "z_High School",
+                                               "Bachelors", "Masters", "PhD"),
+                                    ordered = T)
+ins_train_df$EDUCATION <- factor(ins_train_df$EDUCATION,
+                                   levels = c("<High School", "z_High School",
+                                               "Bachelors", "Masters", "PhD"),
+                                    ordered = T)
+```
+
+```{r}
+summary(ins_train_df)
+```
+
+
+```{r}
+summary(ins_train_df)
+```
+# KNN-Impute NA's
+
+```{r}
+library(VIM)
+```
+First, mark the values as NA's, in case the knn-imputation doesn't work
+
+```{r}
+ins_train_df['NA_YOJ'] = is.na(ins_train_df$YOJ)
+ins_eval_df['NA_YOJ'] = is.na(ins_eval_df$YOJ)
+ins_train_df['NA_CAR_AGE'] = is.na(ins_train_df$CAR_AGE)
+ins_eval_df['NA_CAR_AGE'] = is.na(ins_eval_df$CAR_AGE)
+ins_train_df['NA_HOME_VAL'] = is.na(ins_train_df$HOME_VAL)
+ins_eval_df['NA_HOME_VAL'] = is.na(ins_eval_df$HOME_VAL)
+ins_train_df['NA_INCOME'] = is.na(ins_train_df$INCOME)
+ins_eval_df['NA_INCOME'] = is.na(ins_eval_df$INCOME)
+ins_train_df['NA_JOB'] = is.na(ins_train_df$JOB)
+ins_eval_df['NA_JOB'] = is.na(ins_eval_df$JOB)
+```
+
+### The below kNN is an updated version of what was saved to github in the "write_csv" chunk following it.  Different attempts to change kNN hyperparameters provided only worse results.  So best to use what's already pushed to github.
+
+```{r}
+ins_train_df = kNN(ins_train_df, variable = c('YOJ', 'CAR_AGE', 'HOME_VAL',
+                                              'INCOME', 'JOB'),
+                dist_var = names(ins_eval_df[4:31]), k=5, weights = 'auto', imp_var=F,
+                addRF=T, useImputedDist = F)
+ins_eval_df = kNN(ins_eval_df, variable = c('YOJ', 'CAR_AGE', 'HOME_VAL',
+                                              'INCOME', 'JOB'),
+                dist_var = names(ins_eval_df[4:31]), k=5, weights = 'auto', imp_var = F,
+                addRF=T, useImputedDist = F)
+```
+
+```{r}
+summary(ins_train_df)
+```

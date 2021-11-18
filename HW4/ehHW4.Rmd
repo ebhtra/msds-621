@@ -1,0 +1,346 @@
+---
+title: "ehHW4"
+author: "eh"
+date: "11/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load the assigned data with kNN-imputed values for blanks and NA's
+
+
+```{r}
+train = read.csv("https://raw.githubusercontent.com/ebhtra/msds-621/main/HW4/KNNimputed_train.csv")
+eval = read.csv("https://raw.githubusercontent.com/ebhtra/msds-621/main/HW4/KNNimputed_eval.csv")
+summary(train)
+```
+### Convert categorical features to factors, mostly nominal (unordered), but with one exception for EDUCATION, which allows for a natural ordering.  
+
+```{r}
+eval$SEX <- factor(eval$SEX)
+train$SEX <- factor(train$SEX)
+eval$JOB <- factor(eval$JOB)
+train$JOB <- factor(train$JOB)
+eval$CAR_USE <- factor(eval$CAR_USE)
+train$CAR_USE <- factor(train$CAR_USE)
+eval$CAR_TYPE <- factor(eval$CAR_TYPE)
+train$CAR_TYPE <- factor(train$CAR_TYPE)
+eval$URBANICITY <- factor(eval$URBANICITY)
+train$URBANICITY <- factor(train$URBANICITY)
+
+eval$EDUCATION <- factor(eval$EDUCATION,
+                         levels = c("<High School", "z_High School",
+                                    "Bachelors", "Masters", "PhD"),
+                         ordered = T)
+train$EDUCATION <- factor(train$EDUCATION,
+                          levels = c("<High School", "z_High School",
+                                     "Bachelors", "Masters", "PhD"),
+                          ordered = T)
+```
+
+## Split off a validation set so we can test models on unseen data before evaluating on other provided csv file
+
+```{r}
+
+set.seed(621)
+shuffled = sample(1:dim(train)[1])
+valid_inds = shuffled[1:800]
+train_inds = shuffled[801:length(shuffled)]
+
+trains = train[train_inds,]
+valids = train[valid_inds,]
+
+mean(trains$TARGET_FLAG)
+mean(valids$TARGET_FLAG)
+```
+
+Remove unnecessary index column
+
+```{r}
+trains = subset(trains, select = -c(X))
+```
+
+### Baseline model with all predictors, untransformed
+
+```{r}
+LOGreg1 <- glm(TARGET_FLAG ~ . - TARGET_AMT - RED_CAR - CAR_AGE - SEX - AGE - NA_YOJ -
+              NA_CAR_AGE - NA_INCOME - NA_JOB - NA_HOME_VAL, data = trains, 
+              family = "binomial")
+summary(LOGreg1)
+```
+
+### Check predictions by that model on the validation set we split off.
+
+```{r}
+preds.1 = predict(LOGreg1, newdata =  valids)
+preds.1 = 1 * (preds.1 > 0)
+paste("Accuracy for LOGreg1 on the validation set: ", round(mean(preds.1==valids$TARGET_FLAG), 3))
+print("Baseline accuracy for predicting all '0' is 0.723")
+```
+
+That looks like a small improvement, as measured by accuracy, so let's see if we can improve upon it. 
+
+
+## Look at relationships between variables  
+
+Here are the 5 predictors that have a somewhat normal distribution, grouped by response:
+
+```{r}
+boxplot(AGE ~ TARGET_FLAG, data=trains)
+boxplot(BLUEBOOK ~ TARGET_FLAG, data=trains)
+boxplot(INCOME ~ TARGET_FLAG, data=trains)
+boxplot(TRAVTIME ~ TARGET_FLAG, data=trains)
+boxplot(YOJ ~ TARGET_FLAG, data=trains)
+```
+Here are the two pairs of predictors that seem to have different covariance (evidenced by the different slopes when you condition on the response == 0 or 1).  
+
+```{r}
+#Figure 8.11 on page 289
+par(mfrow=c(1,1))
+plot(trains$INCOME,trains$TRAVTIME,pch=trains$TARGET_FLAG+1,col=trains$TARGET_FLAG+1,xlab="income",ylab="travel time")
+abline(lsfit(trains$INCOME[trains$TARGET_FLAG==0],trains$TRAVTIME[trains$TARGET_FLAG==0]),lty=1,col=1)
+abline(lsfit(trains$INCOME[trains$TARGET_FLAG==1],trains$TRAVTIME[trains$TARGET_FLAG==1]),lty=2,col=2)
+legend(200000,140,legend=c("No","Yes"),pch=1:2,col=1:2,title="Had accident?")
+```
+
+
+
+```{r}
+#Figure 8.11 on page 289
+par(mfrow=c(1,1))
+plot(trains$INCOME,trains$YOJ,pch=trains$TARGET_FLAG+1,col=trains$TARGET_FLAG+1,xlab="income",ylab="years on job")
+abline(lsfit(trains$INCOME[trains$TARGET_FLAG==0],trains$YOJ[trains$TARGET_FLAG==0]),lty=1,col=1)
+abline(lsfit(trains$INCOME[trains$TARGET_FLAG==1],trains$YOJ[trains$TARGET_FLAG==1]),lty=2,col=2)
+legend(200000,24,legend=c("No","Yes"),pch=1:2,col=1:2,title="Had accident?")
+```
+Add interaction terms for these two pairs of predictors whose covariance is different conditioned on the response.
+
+```{r}
+trains$INCxYOJ = trains$INCOME * trains$YOJ
+trains$INCxTRAV = trains$INCOME * trains$TRAVTIME
+```
+
+See if the interaction terms improved the fit:  
+
+```{r}
+LOGreg2 <- glm(TARGET_FLAG ~ . - TARGET_AMT - RED_CAR - CAR_AGE - SEX - AGE - NA_YOJ -
+              NA_CAR_AGE - NA_INCOME - NA_JOB - NA_HOME_VAL, data = trains, 
+              family = "binomial")
+summary(LOGreg2)
+```
+
+That was a very slight improvement.  Is it even significant?  Check with ANOVA, using chi-squared as a test.
+
+```{r}
+anova(LOGreg1, LOGreg2, test="Chisq")
+```
+Since they're significant, based on the p-val, add the cross-terms to the validation and evaluation sets.
+
+```{r}
+valids$INCxYOJ = valids$INCOME * valids$YOJ
+valids$INCxTRAV = valids$INCOME * valids$TRAVTIME
+
+eval$INCxYOJ = eval$INCOME * eval$YOJ
+eval$INCxTRAV = eval$INCOME * eval$TRAVTIME
+```
+
+## Find where logarithmic transforms of variables may help.
+
+Logs of skewed predictors:  
+
+```{r}
+trains$log_TRAVTIME = log(trains$TRAVTIME+1)
+trains$log_INCOME = log(trains$INCOME+1)
+trains$log_BLUEBOOK = log(trains$BLUEBOOK+1)
+```
+
+
+```{r}
+LOGreg3 <- glm(TARGET_FLAG ~ . - TARGET_AMT - RED_CAR - CAR_AGE - SEX - AGE - NA_YOJ -
+              NA_CAR_AGE - NA_INCOME - NA_JOB - NA_HOME_VAL, data = trains, 
+              family = "binomial")
+summary(LOGreg3)
+```
+
+```{r}
+anova(LOGreg2, LOGreg3, test="Chisq")
+```
+That is slightly yet significantly better as well.  Add these logarithmic terms to the valids and evals.  
+
+```{r}
+valids$log_TRAVTIME = log(valids$TRAVTIME+1)
+valids$log_INCOME = log(valids$INCOME+1)
+valids$log_BLUEBOOK = log(valids$BLUEBOOK+1)
+
+eval$log_TRAVTIME = log(eval$TRAVTIME+1)
+eval$log_INCOME = log(eval$INCOME+1)
+eval$log_BLUEBOOK = log(eval$BLUEBOOK+1)
+```
+
+Adding these 3 log terms made the untransformed versions of 2 of them (BLUEBOOK and TRAVTIME) irrelevant, and did the same to YOJ for some reason.  Removing those three predictors reduces the AIC a bit.  
+
+```{r}
+LOGreg4 <- glm(TARGET_FLAG ~ . - TARGET_AMT - RED_CAR - CAR_AGE - SEX - AGE - NA_YOJ -
+              NA_CAR_AGE - NA_INCOME - NA_JOB - NA_HOME_VAL - BLUEBOOK - TRAVTIME - YOJ,
+              data = trains, family = "binomial")
+summary(LOGreg4)
+```
+
+## Check variances of individual predictors split by responses.  
+
+This can be an indicator of the need for a quadratic term.  
+
+Since there are 3 times as many rows with TARGET_FLAG==0, we'll sample the same number of each response in order to better compare variances.
+
+```{r}
+sum(trains$TARGET_FLAG)
+```
+
+
+```{r}
+library(dplyr)
+sample_zeros = trains[trains$TARGET_FLAG==0, ][2001:3931, ]
+ones = trains[trains$TARGET_FLAG==1, ]
+
+one_vars = ones %>% summarise_if(is.numeric, var)
+zero_vars = sample_zeros %>% summarise_if(is.numeric, var)
+
+varDF = rbind(one_vars, zero_vars)
+varDF[ , 3:(dim(varDF)[2])]
+```
+The biggest candidates for adding quadratic terms appear to be KIDSDRIV, AGE, OLDCLAIM, CLM_FREQ, MVR_PTS, and log_INCOME, although squaring a logarithmic term is bordering on adding collinearity, so we'll skip that one.  The untransformed version of AGE has been left out of the last couple of models, but to see if it has more meaning in a model that also fits its squared value, we'll add it back in here.
+
+```{r}
+trains$sq_MVR_PTS = trains$MVR_PTS ** 2
+trains$sq_KIDSDRIV = trains$KIDSDRIV ** 2
+trains$sq_AGE = trains$AGE ** 2
+trains$sq_OLDCLAIM = trains$OLDCLAIM ** 2
+trains$sq_CLM_FREQ = trains$CLM_FREQ ** 2
+```
+
+
+```{r}
+LOGreg5 <- glm(TARGET_FLAG ~ . - TARGET_AMT - RED_CAR - CAR_AGE - SEX - NA_YOJ -
+              NA_CAR_AGE - NA_INCOME - NA_JOB - NA_HOME_VAL - BLUEBOOK - TRAVTIME - YOJ,
+              data = trains, family = "binomial")
+summary(LOGreg5)
+```
+
+Both OLD_CLAIM and its squared term are now irrelevant, so we'll remove them, one at a time, to make sure they're not just sharing some level of significance, but interestingly, both AGE and its squared term are now highly significant.  HOME_KIDS has been more and more diminished as we continue nesting models, and we'll remove it in a moment.  First, a look at the analysis of deviance:  
+
+
+```{r}
+anova(LOGreg4, LOGreg5, test="Chisq")
+```
+
+The latest model, with AGE reintroduced and with the quadratic terms, is significantly better than its predecessors.  We'll remove the aforementioned insignificant terms and see how much the AIC decreases.  Note that we only remove OLDCLAIM, and not its quadratic term, at first, and that squared term does turn out to be significant, but with a tiny coefficient.
+
+```{r}
+LOGreg6 <- glm(TARGET_FLAG ~ . - TARGET_AMT - RED_CAR - CAR_AGE - SEX - NA_YOJ -
+              NA_CAR_AGE - NA_INCOME - NA_JOB - NA_HOME_VAL - BLUEBOOK - TRAVTIME - 
+              YOJ - HOMEKIDS - OLDCLAIM,
+              data = trains, family = "binomial")
+summary(LOGreg6)
+```
+
+The MVR_PTS predictor and its quadratic term are both less than highly significant, but if we remove them the model fit worsens.  The marginal plots for both show very close non-parametric fits, so let's see if there's some interaction between the two:  
+
+
+```{r}
+#Figure 8.11 on page 289
+par(mfrow=c(1,1))
+plot(trains$MVR_PTS,trains$sq_MVR_PTS,pch=trains$TARGET_FLAG+1,col=trains$TARGET_FLAG+1,xlab="MVR_PTS",ylab="sq_MVR_PTS")
+abline(lsfit(trains$MVR_PTS[trains$TARGET_FLAG==0],trains$sq_MVR_PTS[trains$TARGET_FLAG==0]),lty=1,col=1)
+abline(lsfit(trains$MVR_PTS[trains$TARGET_FLAG==1],trains$sq_MVR_PTS[trains$TARGET_FLAG==1]),lty=2,col=2)
+legend(2,150,legend=c("No","Yes"),pch=1:2,col=1:2,title="Had accident?")
+```
+
+It looks like there is still interaction between the term and its own square, so we'll add a cubic term.  
+
+```{r}
+trains$cubed_MVR = trains$MVR_PTS ** 3
+```
+
+```{r}
+LOGreg7 <- glm(TARGET_FLAG ~ . - TARGET_AMT - RED_CAR - CAR_AGE - SEX - NA_YOJ -
+              NA_CAR_AGE - NA_INCOME - NA_JOB - NA_HOME_VAL - BLUEBOOK - TRAVTIME - 
+              YOJ - HOMEKIDS - OLDCLAIM,
+              data = trains, family = "binomial")
+summary(LOGreg7)
+```
+```{r}
+anova(LOGreg6, LOGreg7, test="Chisq")
+```
+
+The addition of the cubic term has improved the fit of the model, in a small but significant way.  It's interesting to note that the original MVR_PTS term and its cubed term coefficients both have positive signs, meaning that as expected, higher points against a driver increase the odds of that driver crashing, while the squared term has a negative coefficient, meaning it serves to offset the other two variables to a certain extent.  Yet all three variables are highly significant now, vs. none of them before adding the cubic.  
+
+### A lot of the noise has not been fit by our models, but this is inherently random data, where no predictors serve to strongly predict the outcome.  
+
+#### Check the ROC-AUC for the training data and the validation data
+
+```{r}
+#calculate AUC
+library(pROC)
+auc(trains$TARGET_FLAG, predict(LOGreg7, newdata = trains, type = 'response'))
+```
+
+```{r}
+par(pty='s') # square plot is best
+plot(roc(trains$TARGET_FLAG, predict(LOGreg7, newdata = trains, type = 'response')))
+```
+The model has managed to fit what it can, but the version of the above plot for the validation set won't be as good, nor will the evaluation predictions.  Let's see what we can expect for predictions on new data.  
+
+```{r}
+valids$sq_MVR_PTS = valids$MVR_PTS ** 2
+valids$sq_KIDSDRIV = valids$KIDSDRIV ** 2
+valids$sq_AGE = valids$AGE ** 2
+valids$sq_OLDCLAIM = valids$OLDCLAIM ** 2
+valids$sq_CLM_FREQ = valids$CLM_FREQ ** 2
+valids$cubed_MVR = valids$MVR_PTS ** 3
+
+eval$sq_MVR_PTS = eval$MVR_PTS ** 2
+eval$sq_KIDSDRIV = eval$KIDSDRIV ** 2
+eval$sq_AGE = eval$AGE ** 2
+eval$sq_OLDCLAIM = eval$OLDCLAIM ** 2
+eval$sq_CLM_FREQ = eval$CLM_FREQ ** 2
+eval$cubed_MVR = eval$MVR_PTS ** 3
+```
+
+
+```{r}
+par(pty='s') # square plot is best
+plot(roc(valids$TARGET_FLAG, predict(LOGreg7, newdata = valids, type = 'response')))
+```
+That's not horrible.  Here's the AUC:  
+
+```{r}
+auc(valids$TARGET_FLAG, predict(LOGreg7, newdata = valids, type = 'response'))
+```
+
+The accuracy won't have gone up much from .772 that we started with in our baseline model, vs .723 for the baseline (always predict TARGET_FLAG==0) model.  Let's see if it went up at all:  
+
+```{r}
+preds.7 = predict(LOGreg7, newdata =  valids)
+preds.7 = 1 * (preds.7 > 0)
+paste("Accuracy for LOGreg7 on the validation set: ", round(mean(preds.7==valids$TARGET_FLAG), 3))
+```
+
+This is a great example of simply overfitting a model to its data inputs.  We struggled to reduce the AIC, bit by bit, using all sorts of techniques and transformations and diagnostics, and we ended up with coefficients that were highly significant and made sense, yet we did no better on unseen data than our baseline model did by simply including all variables untransformed.  Here's the baseline model's ROC-AUC, for comparison:  
+
+```{r}
+auc(valids$TARGET_FLAG, predict(LOGreg1, newdata = valids, type = 'response'))
+```
+
+The AUC of the baseline, kitchen sink model is very slightly worse than the same for our complicated one.  
+
+
+
+
+
+
+
+
+
