@@ -1,6 +1,6 @@
 ---
-title: "ehHW4"
-author: "eh"
+title: "logregHW4"
+author: "team 3 "
 date: "11/16/2021"
 output: html_document
 ---
@@ -61,6 +61,7 @@ Remove unnecessary index column
 
 ```{r}
 trains = subset(trains, select = -c(X))
+eval = subset(eval, select = -c(X))
 ```
 
 ### Baseline model with all predictors, untransformed
@@ -146,6 +147,14 @@ valids$INCxTRAV = valids$INCOME * valids$TRAVTIME
 eval$INCxYOJ = eval$INCOME * eval$YOJ
 eval$INCxTRAV = eval$INCOME * eval$TRAVTIME
 ```
+
+```{r}
+preds.2 = predict(LOGreg2, newdata =  valids, type='response')
+preds.2 = 1 * (preds.2 > 0.5)
+paste("Accuracy for LOGreg2 on the validation set: ", round(mean(preds.2==valids$TARGET_FLAG), 3))
+print("Baseline accuracy for predicting all '0' is 0.723")
+```
+
 
 ## Find where logarithmic transforms of variables may help.
 
@@ -246,6 +255,22 @@ LOGreg6 <- glm(TARGET_FLAG ~ . - TARGET_AMT - RED_CAR - CAR_AGE - SEX - NA_YOJ -
 summary(LOGreg6)
 ```
 
+```{r}
+valids$sq_MVR_PTS = valids$MVR_PTS ** 2
+valids$sq_KIDSDRIV = valids$KIDSDRIV ** 2
+valids$sq_AGE = valids$AGE ** 2
+valids$sq_OLDCLAIM = valids$OLDCLAIM ** 2
+valids$sq_CLM_FREQ = valids$CLM_FREQ ** 2
+
+eval$sq_MVR_PTS = eval$MVR_PTS ** 2
+eval$sq_KIDSDRIV = eval$KIDSDRIV ** 2
+eval$sq_AGE = eval$AGE ** 2
+eval$sq_OLDCLAIM = eval$OLDCLAIM ** 2
+eval$sq_CLM_FREQ = eval$CLM_FREQ ** 2
+```
+
+
+
 The MVR_PTS predictor and its quadratic term are both less than highly significant, but if we remove them the model fit worsens.  The marginal plots for both show very close non-parametric fits, so let's see if there's some interaction between the two:  
 
 
@@ -262,6 +287,8 @@ It looks like there is still interaction between the term and its own square, so
 
 ```{r}
 trains$cubed_MVR = trains$MVR_PTS ** 3
+valids$cubed_MVR = valids$MVR_PTS ** 3
+eval$cubed_MVR = eval$MVR_PTS ** 3
 ```
 
 ```{r}
@@ -287,6 +314,13 @@ library(pROC)
 auc(trains$TARGET_FLAG, predict(LOGreg7, newdata = trains, type = 'response'))
 ```
 
+
+```{r}
+auc(trains$TARGET_FLAG, predict(LOGreg1, newdata = trains, type = 'response'))
+```
+
+
+
 ```{r}
 par(pty='s') # square plot is best
 plot(roc(trains$TARGET_FLAG, predict(LOGreg7, newdata = trains, type = 'response')))
@@ -294,19 +328,19 @@ plot(roc(trains$TARGET_FLAG, predict(LOGreg7, newdata = trains, type = 'response
 The model has managed to fit what it can, but the version of the above plot for the validation set won't be as good, nor will the evaluation predictions.  Let's see what we can expect for predictions on new data.  
 
 ```{r}
-valids$sq_MVR_PTS = valids$MVR_PTS ** 2
-valids$sq_KIDSDRIV = valids$KIDSDRIV ** 2
-valids$sq_AGE = valids$AGE ** 2
-valids$sq_OLDCLAIM = valids$OLDCLAIM ** 2
-valids$sq_CLM_FREQ = valids$CLM_FREQ ** 2
-valids$cubed_MVR = valids$MVR_PTS ** 3
+#valids$sq_MVR_PTS = valids$MVR_PTS ** 2
+#valids$sq_KIDSDRIV = valids$KIDSDRIV ** 2
+#valids$sq_AGE = valids$AGE ** 2
+#valids$sq_OLDCLAIM = valids$OLDCLAIM ** 2
+#valids$sq_CLM_FREQ = valids$CLM_FREQ ** 2
+#valids$cubed_MVR = valids$MVR_PTS ** 3
 
-eval$sq_MVR_PTS = eval$MVR_PTS ** 2
-eval$sq_KIDSDRIV = eval$KIDSDRIV ** 2
-eval$sq_AGE = eval$AGE ** 2
-eval$sq_OLDCLAIM = eval$OLDCLAIM ** 2
-eval$sq_CLM_FREQ = eval$CLM_FREQ ** 2
-eval$cubed_MVR = eval$MVR_PTS ** 3
+#eval$sq_MVR_PTS = eval$MVR_PTS ** 2
+#eval$sq_KIDSDRIV = eval$KIDSDRIV ** 2
+#eval$sq_AGE = eval$AGE ** 2
+#eval$sq_OLDCLAIM = eval$OLDCLAIM ** 2
+#eval$sq_CLM_FREQ = eval$CLM_FREQ ** 2
+#eval$cubed_MVR = eval$MVR_PTS ** 3
 ```
 
 
@@ -323,8 +357,8 @@ auc(valids$TARGET_FLAG, predict(LOGreg7, newdata = valids, type = 'response'))
 The accuracy won't have gone up much from .772 that we started with in our baseline model, vs .723 for the baseline (always predict TARGET_FLAG==0) model.  Let's see if it went up at all:  
 
 ```{r}
-preds.7 = predict(LOGreg7, newdata =  valids)
-preds.7 = 1 * (preds.7 > 0)
+preds.7 = predict(LOGreg7, newdata =  valids, type='response')
+preds.7 = 1 * (preds.7 > 0.5)
 paste("Accuracy for LOGreg7 on the validation set: ", round(mean(preds.7==valids$TARGET_FLAG), 3))
 ```
 
@@ -337,6 +371,37 @@ auc(valids$TARGET_FLAG, predict(LOGreg1, newdata = valids, type = 'response'))
 The AUC of the baseline, kitchen sink model is very slightly worse than the same for our complicated one.  
 
 
+### Check any change in cost for False Negatives.  We don't know the cost of a False Positive, but we can see how much each unpredicted claim (FN) costs the insurance company.  
+
+```{r}
+lr1neg = valids$TARGET_AMT[preds.1 == 0]
+lr7neg = valids$TARGET_AMT[preds.7 == 0]
+paste("model 1 predicted", length(lr1neg), "negatives on the validation set.")
+paste("Out of those,", sum(lr1neg > 0), "were false, and the claim amount totalled $", round(sum(lr1neg)))
+noquote('---------------')
+paste("model 7 predicted", length(lr7neg), "negatives on the validation set.")
+paste("Out of those,", sum(lr7neg > 0), "were false, and the claim amount totalled $", round(sum(lr7neg)))
+
+```
+
+
+```{r}
+head(eval)
+```
+```{r}
+eval$TARGET_AMT=-1  #need a number there for model not to melt, even though it isn't used
+```
+
+```{r}
+evalPreds = predict(LOGreg7, newdata =  eval, type='response')
+evalPreds = 1 * (evalPreds > 0.5)
+evalPreds = data.frame(evalPreds)
+```
+
+```{r}
+write_csv(data.frame(evalPreds), "logregEval.csv")
+#write_csv(data.frame(preds.7), "linregEval.csv")
+```
 
 
 
