@@ -1,0 +1,400 @@
+---
+title: "eh621FP"
+author: "Ethan Haley"
+date: "11/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(dplyr)
+```
+
+```{r WHO}
+WHO_URL <- "https://raw.githubusercontent.com/douglasbarley/DATA621/main/Final%20Project/Life%20Expectancy%20Data.csv"
+WHO <- read_csv(WHO_URL )
+names(WHO)[1] <- "CountryName"
+head(WHO)
+```
+
+```{r WB_Pop}
+WB_Pop_URL <- "https://raw.githubusercontent.com/douglasbarley/DATA621/main/Final%20Project/Population_by_Country.csv"
+WB_Pop <- read_csv(WB_Pop_URL) %>%
+  subset(select = c("CountryName","CountryCode"))
+head(WB_Pop)
+```
+
+
+### World Bank (WB) Country Region metadata
+
+```{r WB_Meta}
+WB_Meta_URL <- "https://raw.githubusercontent.com/douglasbarley/DATA621/main/Final%20Project/Country_Region_Metadata.csv"
+WB_Meta <- read_csv(WB_Meta_URL) %>%
+  subset(select = c("CountryCode","Region","IncomeGroup"))
+head(WB_Meta)
+```
+
+### Join WB data tables
+
+```{r WB_data}
+WB_data <- inner_join(WB_Pop,WB_Meta, by = c("CountryCode" = "CountryCode"), copy = FALSE, keep = FALSE)
+head(WB_data, 10)
+```
+### Join WHO data with WB metadata for each country
+
+```{r WHO_with_Region}
+WHO_with_Region <- left_join(WHO,WB_data, by = c("CountryName" = "CountryName"), copy = FALSE, keep = FALSE)
+
+head(WHO_with_Region, 10)
+
+summary(WHO_with_Region)
+
+```
+## EDA 
+
+```{r}
+
+WHO_Final <- WHO_with_Region
+
+# Dropping NA
+WHO_Final <- WHO_Final %>%
+  drop_na() 
+
+# renaming columns 
+WHO_Final <- WHO_Final %>%
+  rename(LifeExpectancy = "Life expectancy", AdultMortality = "Adult Mortality", InfantDeaths = "infant deaths"
+         , IncomeComposition ="Income composition of resources")
+
+summary(WHO_Final)
+
+```    
+
+### Add columns for other life expectancy data that doesn't have inconsistencies
+
+```{r}
+lifexpURL <- 'https://raw.githubusercontent.com/ebhtra/msds-621/main/FinalProject/life_exp_breakdown.csv'
+lifexp = read_csv(lifexpURL)
+head(lifexp)
+```
+
+Pivot to combine all data for one country/one year into one wider row
+
+```{r}
+lifexp = pivot_wider(lifexp, names_from = c('Indicator'), values_from = c('Male','Female','Both_Sexes'))
+lifexp = lifexp %>% fill(everything(), .direction = 'up')
+lifexp = lifexp[seq(1, 1464, 2),]
+tail(lifexp)
+```
+```{r}
+# rename columns and drop first one
+lifexp <- lifexp %>% select(-c(1)) %>%
+  rename(MLife60 = "Male_Life expectancy at age 60 (years)",
+         MLife0  = "Male_Life expectancy at birth (years)",
+         FLife60 = "Female_Life expectancy at age 60 (years)",
+         FLife0  = "Female_Life expectancy at birth (years)",
+         Life60 = "Both_Sexes_Life expectancy at age 60 (years)",
+         Life0  = "Both_Sexes_Life expectancy at birth (years)")
+head(lifexp, 2)
+```
+
+
+
+
+
+
+```{r}
+WHO = WHO[order(WHO$CountryName, WHO$Year),]
+for (co in unique(WHO$CountryName)){
+  coDF = WHO[WHO$CountryName==co,]
+  plot(coDF$Year, coDF$`Life expectancy`, type='l', main = co, xlab = 'year', ylab = 'life expectancy')
+}
+```
+
+```{r}
+WHO[WHO$CountryName=="Cook Islands",]
+```
+Remove the few countries whose data are incomplete by year 
+
+```{r}
+cTable = table(WHO$CountryName)
+incompletes = c()
+for (co in unique(WHO$CountryName)){
+  if (cTable[co] < 16) {incompletes = c(incompletes, co)}
+}
+incompletes
+```
+
+```{r}
+WHO = WHO[!WHO$CountryName %in% incompletes,]
+dim(WHO)
+```
+
+```{r}
+govtExp = read_csv("~/CUNY_MSDS/DATA621/FinalProject/healthExpenditure.csv")
+head(govtExp)
+```
+```{r}
+dim(govtExp)
+```
+
+```{r}
+table(govtExp$SpatialDimValueCode)
+```
+
+```{r}
+govtExp = govtExp[order(govtExp$Location, govtExp$Period),]
+head(govtExp)
+```
+```{r}
+govtExp = subset(govtExp, select = c(SpatialDimValueCode, Location, Period, FactValueNumeric))
+head(govtExp)
+```
+```{r}
+summary(govtExp)
+```
+
+```{r}
+print("Countries that make up the 168 missing values for govt expenditure %: ")
+table(govtExp[is.na(govtExp$FactValueNumeric), 'Location'])
+```
+
+
+```{r}
+WHO[WHO$Measles==max(WHO$Measles),]
+```
+Make the measles a rate instead of a number  
+
+```{r}
+stillBirths = read_csv('~/CUNY_MSDS/DATA621/FinalProject/stillBirthData.csv')
+head(stillBirths)
+```
+
+Stillbirths per 1000 total births
+
+```{r}
+stillBirths = stillBirths[order(stillBirths$Location, stillBirths$Period),]
+stillBirths = subset(stillBirths, select = c(SpatialDimValueCode, Location, Period, FactValueNumeric))
+head(stillBirths)
+```
+
+```{r}
+summary(stillBirths)
+```
+
+
+```{r}
+WHO[WHO$`HIV/AIDS`==max(WHO$`HIV/AIDS`),]
+```
+### Try for better population numbers  
+
+```{r}
+library(rvest)
+temp <- read_html('https://en.wikipedia.org/wiki/List_of_countries_by_past_and_projected_future_population')
+pops <- temp %>%
+  html_nodes("table") %>%
+  html_table(fill = TRUE)
+```
+
+```{r}
+pops
+```
+
+```{r}
+pop = pops[[2]]
+pop = pop %>% 
+  select(c('Country (or dependent territory)', '2000', '2005', '2010', '2015')) %>%
+  rename(Country = 'Country (or dependent territory)') 
+pop
+```
+### Make values numeric and multiply by 1000 to match our WHO d.f.
+
+
+```{r}
+numb = function(x){as.integer(str_remove_all(x, ",")) * 1000}
+pop[, 2:5] = sapply(pop[, 2:5], numb)
+pop
+```
+
+### See if country names are compatible, for merging  
+
+```{r}
+for (n in unique(WHO_with_Region$CountryName)){
+  if (! n %in% unique(pop$Country)){
+    print(n)
+  }
+}
+```
+
+```{r}
+unique(WHO_with_Region$CountryName)
+```
+```{r}
+pop$Country[25] = "Bolivia (Plurinational State of)"
+pop$Country[30] = "Brunei Darussalam"
+pop$Country[99] = "Côte d'Ivoire"
+pop$Country[37] = "Cabo Verde"
+pop$Country[164] = "Congo"
+pop$Country[51] = "Czechia"
+pop$Country[147] = "Democratic People's Republic of Korea"
+pop$Country[93] = "Iran (Islamic Republic of)"
+pop$Country[110] = "Lao People's Democratic Republic"
+pop$Country[66] = "Micronesia (Federated States of)"
+pop$Country[190] = "Republic of Korea"
+pop$Country[130] = "Republic of Moldova"
+pop$Country[166] = "Russian Federation"
+pop$Country[177] = "Sao Tome and Principe"
+pop$Country[63] = "Swaziland"
+pop$Country[198] = "Syrian Arab Republic"
+pop$Country[148] = "The former Yugoslav republic of Macedonia"
+pop$Country[215] = "United Kingdom of Great Britain and Northern Ireland"
+pop$Country[201] = "United Republic of Tanzania"
+pop$Country[216] = "United States of America"
+pop$Country[221] = "Venezuela (Bolivarian Republic of)"
+pop$Country[222] = "Viet Nam"
+```
+
+```{r}
+for (n in unique(WHO_with_Region$CountryName)){
+  if (! n %in% unique(pop$Country)){
+    print(n)
+  }
+}
+```
+
+Pivot population values for different years into their own rows  
+
+```{r}
+poplong = pivot_longer(pop, cols = c('2000', '2005', '2010', '2015'),
+                       names_to = 'Year', values_to = 'Pop')
+poplong$Year = as.numeric(poplong$Year)
+poplong
+```
+#### Merge into main d.f.  
+
+```{r}
+WHO_plus_pops = left_join(WHO_with_Region, poplong, by = c("CountryName"="Country", "Year"="Year"))
+WHO_plus_pops
+```
+
+### Check for govt expenditure % if country codes match main DF, for merging purposes  
+
+```{r}
+for (n in unique(WHO_plus_pops$CountryCode)){
+  if (! n %in% unique(govtExp$SpatialDimValueCode)){
+    print(n)
+  }
+}
+```
+
+Reminder:  
+```{r}
+head(govtExp)
+```
+```{r}
+merger = govtExp %>%
+  rename(CountryCode = "SpatialDimValueCode",
+         Year = "Period", PctExp = "FactValueNumeric") %>%
+  select(-c(2))
+head(merger)
+```
+```{r}
+WHO_plus_healthExp = left_join(WHO_plus_pops, merger, by = c("CountryCode", "Year"))
+head(WHO_plus_healthExp)
+```
+#### Repeat procedure with stillbirths data  
+reminder:  
+
+```{r}
+head(stillBirths,3)
+```
+```{r}
+for (n in unique(WHO_plus_healthExp$CountryCode)){
+  if (! n %in% unique(stillBirths$SpatialDimValueCode)){
+    print(n)
+  }
+}
+```
+
+```{r}
+merger = stillBirths %>%
+  rename(CountryCode = "SpatialDimValueCode",
+         Year = "Period", StillBirthRate = "FactValueNumeric") %>%
+  select(-c(2))
+head(merger)
+```
+
+```{r}
+WHO_plus_stillBirths = left_join(WHO_plus_healthExp, merger, by = c("CountryCode", "Year"))
+head(WHO_plus_stillBirths)
+```
+### Now add the life expectancy columns  
+
+```{r}
+head(lifexp, 2)
+```
+
+
+```{r}
+for (n in unique(WHO_plus_stillBirths$CountryCode)){
+  if (! n %in% unique(lifexp$CCode)){
+    print(n)
+  }
+}
+```
+
+```{r}
+merger = lifexp %>%
+  rename(CountryCode = "CCode") %>%
+  select(c(2,3,5:11))
+head(merger)
+```
+```{r}
+WHO_plus_lifeExp = left_join(WHO_plus_stillBirths, merger, by = c("CountryCode", "Year"))
+head(WHO_plus_lifeExp)
+```
+Rename some cols
+
+```{r}
+WHO_plus_lifeExp <- WHO_plus_lifeExp %>%
+  rename(LifeExpectancy = "Life expectancy", AdultMortality = "Adult Mortality", 
+         InfantDeaths = "infant deaths", IncomeComposition ="Income composition of resources")
+names(WHO_plus_lifeExp)
+```
+
+#### Rearrange columns so we can compare values better  
+
+```{r}
+WHO_full = WHO_plus_lifeExp %>%
+  select(c(1,2,4,35,34,33,32,31,30,8,27,18,26,7,21,22,25,3,17,28,6,12,5,13,15,16,9,10,14,19,20,11,24,29,23))
+WHO_full[111:115,]
+```
+
+#### Remove the few countries whose data are incomplete by year 
+
+```{r}
+cTable = table(WHO_full$CountryName)
+incompletes = c()
+for (co in unique(WHO_full$CountryName)){
+  if (cTable[co] < 16) {incompletes = c(incompletes, co)}
+}
+incompletes
+```
+
+```{r}
+WHO_full = WHO_full[!WHO_full$CountryName %in% incompletes,]
+dim(WHO_full)
+```
+
+```{r}
+write_csv(WHO_full, "WHO_full.csv")
+```
+
+
+
+
+
