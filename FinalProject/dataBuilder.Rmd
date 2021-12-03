@@ -1,0 +1,362 @@
+---
+title: "LifeExpData"
+author: "Ethan Haley"
+date: "12/2/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(dplyr)
+```
+
+#### Kaggle data
+
+```{r WHO}
+WHO_URL <- "https://raw.githubusercontent.com/douglasbarley/DATA621/main/Final%20Project/Life%20Expectancy%20Data.csv"
+WHO <- read_csv(WHO_URL )
+names(WHO)[1] <- "CountryName"
+head(WHO)
+```
+
+#### WB pop data
+
+```{r WB_Pop}
+WB_Pop_URL <- "https://raw.githubusercontent.com/douglasbarley/DATA621/main/Final%20Project/Population_by_Country.csv"
+WB_Pop <- read_csv(WB_Pop_URL) %>%
+  subset(select = c("CountryName","CountryCode"))
+head(WB_Pop)
+```
+
+
+### World Bank (WB) Country Region metadata
+
+```{r WB_Meta}
+WB_Meta_URL <- "https://raw.githubusercontent.com/douglasbarley/DATA621/main/Final%20Project/Country_Region_Metadata.csv"
+WB_Meta <- read_csv(WB_Meta_URL) %>%
+  subset(select = c("CountryCode","Region","IncomeGroup"))
+head(WB_Meta)
+```
+
+### Join WB data tables
+
+```{r WB_data}
+WB_data <- inner_join(WB_Pop,WB_Meta, by = c("CountryCode" = "CountryCode"), copy = FALSE, keep = FALSE)
+head(WB_data, 10)
+```
+
+### Join WHO data with WB metadata for each country
+
+```{r WHO_with_Region}
+WHO_with_Region <- left_join(WHO,WB_data, by = c("CountryName" = "CountryName"), copy = FALSE, keep = FALSE)
+
+head(WHO_with_Region, 10)
+
+summary(WHO_with_Region)
+
+```
+
+```{r}
+# renaming columns 
+DF <- WHO_with_Region %>%
+  rename(LifeExpectancy = "Life expectancy", AdultMortality = "Adult Mortality", InfantDeaths = "infant deaths"
+         , IncomeComposition ="Income composition of resources")
+
+summary(DF)
+```
+
+
+#### Remove the few countries whose data are incomplete by year 
+
+```{r}
+cTable = table(DF$CountryName)
+incompletes = c()
+for (co in unique(DF$CountryName)){
+  if (cTable[co] < 16) {incompletes = c(incompletes, co)}
+}
+incompletes
+```
+
+```{r}
+DF = DF[!DF$CountryName %in% incompletes,]
+dim(DF)
+```
+
+## We're only going to use years 2000, 2005, 2010, and 2015, because those have the realest data values.  Much of the rest seems to be interpolated, often poorly.  
+
+```{r}
+DF = DF[DF$Year %in% c(2000, 2005, 2010, 2015), ]
+dim(DF)
+```
+
+## Get better LifeExp and Population data from the United Nations site, here: 'https://population.un.org/wpp/Download/Standard/CSV/' 
+
+```{r}
+#setwd('~/CUNY_MSDS/DATA621/FinalProject/')
+UNpop = read_csv('WPP2019_TotalPopulationBySex.csv')
+LexpUN = read_csv('WPP2019_Period_Indicators_Medium.csv')
+```
+
+```{r}
+head(UNpop, 2)
+```
+Filter some rows
+
+```{r}
+dim(UNpop)
+UNpop = UNpop[UNpop$Variant=='Medium',]
+dim(UNpop)
+```
+
+Filter more rows  
+
+```{r}
+UNpop = UNpop[(UNpop$Time > 1999) & (UNpop$Time < 2020), ]
+dim(UNpop)
+```
+
+
+Why so many rows still, for 20 years of data? 
+
+```{r}
+UNnames = unique(UNpop$Location)
+length(UNnames)
+```
+
+There are a lot of non-country names in there, like regions and continents names.  Start with the names in our DF and see which ones are missing from this data.
+
+```{r}
+for (n in unique(DF$CountryName)){
+  if (! n %in% UNnames){
+    print(n)
+  }
+}
+```
+
+We could change the country names in this UN data but then we'd probably need to repeat for the next dataset as well, so it may be easier just to change the WHO data we have.  
+
+Check Life Exp names
+
+```{r}
+LEnames = unique(LexpUN$Location)
+for (n in unique(DF$CountryName)){
+  if (! n %in% LEnames){
+    print(n)
+  }
+}
+```
+
+Yes, we'll just change the WHO data names.  
+
+```{r}
+DF$CountryName[DF$CountryName=="Democratic People's Republic of Korea"] = "Dem. People's Republic of Korea"
+DF$CountryName[DF$CountryName=="Micronesia (Federated States of)"] = "Micronesia (Fed. States of)"
+DF$CountryName[DF$CountryName=="Swaziland"] = "Eswatini"
+DF$CountryName[DF$CountryName=="The former Yugoslav republic of Macedonia"] = "North Macedonia"
+DF$CountryName[DF$CountryName=="United Kingdom of Great Britain and Northern Ireland"] = "United Kingdom"
+```
+
+```{r}
+popDF = UNpop %>% select(c(2,5,7:10)) %>% rename(CountryName = "Location", Year = "Time")
+popDF = popDF[popDF$Year %in% c(2000,2005,2010,2015), ]
+popDF[popDF$CountryName == "United States of America",]
+```
+
+How many NA's
+
+```{r}
+summary(popDF)
+```
+
+Probably will end up splitting the gender-missing rows based on usual splits M-F....or dropping that 13% of the countries?  
+
+Now merge that into the DF  
+
+```{r}
+DF = left_join(DF, popDF, by = c('CountryName', 'Year'))
+```
+
+Repeat all that for the UN life exp
+
+```{r}
+head(LexpUN)
+```
+
+To match our "2010" row, e.g., we could use "2005-2010" or "2010-2015" from this d.f.  It seems like using the earlier period would give you better numbers, especially for a period like "2010-2015" vs a period of "2015-2020", when the numbers are still being crunched.  
+
+```{r}
+ends = as.numeric(substr(LexpUN$Time,6,9))
+LexpUN['Year'] = ends
+LexpUN = LexpUN %>% select(c(2, 10, 11:13, 17:19, 26))
+LexpUN = LexpUN[LexpUN$Year %in% c(2000,2005,2010,2015), ]
+LexpUN = LexpUN %>% rename(CountryName = "Location")
+```
+
+```{r}
+DF = left_join(DF, LexpUN, by = c('CountryName', 'Year'))
+DF
+```
+2015 rows for alcohol are mostly NA's.  fill from 2010.
+
+```{r}
+DF = DF %>%
+  fill(Alcohol, .direction = "up")
+DF
+```
+Many of those countries just don't have a lot of data.  Remove them now.  
+
+```{r}
+bad = c("Dem. People's Republic of Korea", "Bolivia (Plurinational State of)", "South Sudan", "Somalia")
+DF = DF[! DF$CountryName %in% bad, ]
+DF
+```
+
+This is in conjunction with the above procedure, except removing columns that just are not trustworthy or full enough.
+
+```{r}
+DF = DF %>% select(-c("LifeExpectancy", "AdultMortality", "percentage expenditure", "GDP","Population", "thinness  1-19 years"))
+DF
+```
+```{r}
+names(DF)
+```
+
+2015 rows for Total expenditure are mostly NA's.  fill from 2010.
+
+```{r}
+DF = DF %>%
+  fill("Total expenditure", .direction = "up")
+DF
+```
+```{r}
+DF = DF %>% select(-c("Hepatitis B", "BMI"))
+DF
+```
+```{r}
+summary(DF)
+```
+
+## Add better GovtExpenditures on Healthcare  
+
+```{r}
+govtExp = read_csv("~/CUNY_MSDS/DATA621/FinalProject/healthExpenditure.csv")
+head(govtExp)
+```
+
+
+```{r}
+govtExp = govtExp[order(govtExp$Location, govtExp$Period),]
+govtExp = subset(govtExp, select = c(SpatialDimValueCode, Location, Period, FactValueNumeric))
+head(govtExp)
+```
+```{r}
+summary(govtExp)
+```
+
+```{r}
+print("Countries that make up the 168 missing values for govt expenditure %: ")
+table(govtExp[is.na(govtExp$FactValueNumeric), 'Location'])
+```
+
+Check if country codes align for merging  
+
+
+```{r}
+for (n in unique(DF$CountryName)){
+  if (! n %in% unique(govtExp$Location)){
+    print(n)
+  }
+}
+```
+
+```{r}
+govtExp$Location[govtExp$Location=="Micronesia (Federated States of)"] = "Micronesia (Fed. States of)"
+govtExp$Location[govtExp$Location=="The former Yugoslav Republic of Macedonia"] = "North Macedonia"
+govtExp$Location[govtExp$Location=="United Kingdom of Great Britain and Northern Ireland"] = "United Kingdom"
+govtExp$Location[govtExp$Location=="Côte d’Ivoire"] = "Côte d'Ivoire"
+```
+
+```{r}
+for (n in unique(DF$CountryName)){
+  if (! n %in% unique(govtExp$Location)){
+    print(n)
+  }
+}
+```
+
+```{r}
+unique(govtExp$Location) # "Micronesia (Federated States of)", "The former Yugoslav Republic of Macedonia", "United Kingdom of Great Britain and Northern Ireland", "Côte d’Ivoire"
+```
+
+```{r}
+govtExp = govtExp %>% select(c(2,3,4)) %>% rename(CountryName = "Location",
+                                                  Year = "Period",
+                                                  PctHealthExp = "FactValueNumeric")
+head(govtExp)
+```
+
+
+```{r}
+DF = left_join(DF, govtExp, by = c('CountryName', 'Year'))
+DF
+```
+Last, add stillbirth data from the W.H.O.
+
+```{r}
+stillBirths = read_csv('~/CUNY_MSDS/DATA621/FinalProject/stillBirthData.csv')
+head(stillBirths)
+```
+
+Stillbirths per 1000 total births
+
+```{r}
+stillBirths = stillBirths[order(stillBirths$Location, stillBirths$Period),]
+stillBirths = subset(stillBirths, select = c(SpatialDimValueCode, Location, Period, FactValueNumeric))
+head(stillBirths)
+```
+```{r}
+for (n in unique(DF$CountryName)){
+  if (! n %in% unique(stillBirths$Location)){
+    print(n)
+  }
+}
+```
+
+```{r}
+stillBirths$Location[stillBirths$Location=="Micronesia (Federated States of)"] = "Micronesia (Fed. States of)"
+stillBirths$Location[stillBirths$Location=="The former Yugoslav Republic of Macedonia"] = "North Macedonia"
+stillBirths$Location[stillBirths$Location=="United Kingdom of Great Britain and Northern Ireland"] = "United Kingdom"
+stillBirths$Location[stillBirths$Location=="Côte d’Ivoire"] = "Côte d'Ivoire"
+```
+
+```{r}
+for (n in unique(DF$CountryName)){
+  if (! n %in% unique(stillBirths$Location)){
+    print(n)
+  }
+}
+```
+
+```{r}
+merger = stillBirths %>%
+  rename(CountryName = "Location",
+         Year = "Period", StillBirthRate = "FactValueNumeric") %>%
+  select(-c(1))
+head(merger)
+```
+
+```{r}
+DF = left_join(DF, merger, by = c("CountryName", "Year"))
+DF
+```
+
+That's about all we're going to build for now.  Let's see what we can get from it.....  
+
+```{r}
+write_csv(DF, "finalProjDF.csv")
+```
+
