@@ -353,6 +353,39 @@ head(merger)
 DF = left_join(DF, merger, by = c("CountryName", "Year"))
 DF
 ```
+In order to proceed with our analysis of countries selected by regions and income groups, we can't have so many NA's for them.  So we'll fill those by hand.  
+
+```{r}
+country = c("Bahamas", "Côte d'Ivoire", "Czechia", "Congo", "Egypt", "Democratic Republic of the Congo", "Gambia", 
+            "Iran (Islamic Republic of)", "Kyrgyzstan", "Lao People's Democratic Republic", "Micronesia (Fed. States of)",
+            "Republic of Korea", "Republic of Moldova", "Saint Lucia", "Saint Vincent and the Grenadines", "Slovakia", "Eswatini",
+            "North Macedonia", "United Kingdom", "United Republic of Tanzania", "United States of America",
+            "Venezuela (Bolivarian Republic of)", "Viet Nam", "Yemen")
+code = c("BHS", "CIV", "CZE", "COD", "EGY", "COD", "GMB", "IRN", "KGZ", "LAO", "FSM", "KOR", "MDA", "LCA", "VCT", "SVK", "SWZ",
+         "MKD", "GBR", "TZA", "USA", "VEN", "VNM", "YEM")
+region = c("Latin America & Caribbean", "Sub-Saharan Africa", "Europe & Central Asia", "Sub-Saharan Africa", 
+           "Middle East & North Africa", "Sub-Saharan Africa", "Sub-Saharan Africa", "Middle East & North Africa", 
+           "Europe & Central Asia", "East Asia & Pacific", "East Asia & Pacific", "East Asia & Pacific",
+           "Europe & Central Asia", "Latin America & Caribbean", "Latin America & Caribbean", "Europe & Central Asia",
+           "Sub-Saharan Africa", "Europe & Central Asia", "Europe & Central Asia", "Sub-Saharan Africa", "North America",
+           "Latin America & Caribbean", "East Asia & Pacific", "Middle East & North Africa")
+income = c("High income", "Lower middle income", "High income", "Low income", "Lower middle income", "Low income", "Low income",
+           "Upper middle income", "Lower middle income", "Lower middle income", "Lower middle income", "High income",
+           "Lower middle income", "Upper middle income", "Upper middle income", "High income", "Lower middle income",
+           "Upper middle income", "High income", "Lower middle income", "High income", "Upper middle income", 
+           "Lower middle income", "Low income")
+all(length(country)==length(code), length(code)==length(region), length(region)==length(income))
+```
+
+And fill in the blanks one by one:  
+
+```{r}
+for (i in 1:length(country)){
+  DF[DF$CountryName==country[i], "CountryCode"] = code[i]
+  DF[DF$CountryName==country[i], "Region"] = region[i]
+  DF[DF$CountryName==country[i], "IncomeGroup"] = income[i]
+}
+```
 
 That's about all we're going to build for now.  Let's see what we can get from it.....  
 
