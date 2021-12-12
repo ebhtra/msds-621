@@ -1,0 +1,363 @@
+---
+title: "exploreFProj"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+
+```{r}
+DF = read_csv('https://raw.githubusercontent.com/ebhtra/msds-621/main/FinalProject/finalProjDF.csv')
+summary(DF)
+```
+
+If we want to break things down by region at all, what is the region structure?  
+
+```{r}
+table(DF$Region)
+```
+
+### Countries with missing health expenditure data  
+
+```{r}
+table(DF[is.na(DF$PctHealthExp), "CountryName"]$CountryName)
+```
+
+### Remove the countries with 2-4 years missing, and then fill the countries with just one year missing  
+
+```{r}
+DF = DF[! DF$CountryName %in% c('Cameroon', 'Lesotho','Libya', 'Montenegro', 'Oman', 'Qatar', 'Saudi Arabia', 
+                                'Syrian Arab Republic', 'United Arab Emirates', 'Yemen', 'Zimbabwe'), ]
+DF[is.na(DF$PctHealthExp), ]
+```
+
+So do we fill up or down?  
+```{r}
+head(DF)
+```
+2000 is the last row for each country, so we fill down.  
+
+```{r}
+DF = fill(DF, "PctHealthExp", .direction = "down")
+DF[is.na(DF$PctHealthExp), ]
+```
+
+```{r}
+DF[is.na(DF$Polio),]  # same for diphtheria
+```
+```{r}
+DF = fill(DF, c("Polio", "Diphtheria"), .direction = "down")
+```
+
+
+
+
+
+
+```{r}
+meanLE = sum(DF$LEx * DF$PopTotal) / sum(DF$PopTotal)
+hist(DF$LEx, breaks = 20, main = "Life Expectancies for All Countries, 2000-2015", xlab = "Years")
+lines(c(meanLE, meanLE), c(0,80), col='red', lty=2)
+text(57, 65, "population-weighted mean ====>", col='red')
+```
+    
+    
+The mean of 69.15 years is not just an average of all life expectancy values for all countries, but rather $\frac{\sum(LifeExp\times Population)}{\sum Population}$ where the sums are over every row in the data, such that India's life expectancy values contribute much more to the mean than do Barbados', for example.  This gives us a better idea of the global average life expectancy for someone born in this period.  
+
+
+
+```{r, fig.height=3, fig.width=6}
+plot(log(DF$PopTotal), DF$LEx, pch=as.character((DF$Year-2000)/5 + 1), 
+     main = "Population vs Life Expectancy, by Country and Year", 
+     xlab="Log(Population in thousands)", ylab="Life Expectancy", 
+     col=factor(DF$Region), xlim=c(4.5,14.2))
+text(c(5,5,5,5), c(50,47,44,41), c("4=2015","3=2010","2=2005","1=2000"))
+text(rep(13.5,7), seq(58,40,by=-3), levels(factor(DF$Region)), col = 1:7)
+```
+  
+Middle-sized countries appear to account for the lowest Life Expectancies, but this looks more due to their region (Sub-Saharan Africa) than their size.  You can see in that chart how the four measurements per country are correlated.  Within each country (n=4 measurements), as population goes up so does life exp, although both probably arise from the passage of time.  The lower life expectancies are rising to the mean much more quickly than the higher ones are moving away from it, not just in percentage terms but in absolute increase.  Their populations also seem to be increasing faster overall, although the log-scale of the x-axis means that any such increase is by percentage.  
+
+
+
+```{r}
+plot(log(DF$StillBirthRate), DF$LEx, col=factor(DF$Region), main = "Stillbirth Rate vs Life Expectancy", 
+     xlab = "Log(Still births per 1000 total births)", ylab = "Life Expectancy")
+text(rep(1.2,7), seq(58,40,by=-3), levels(factor(DF$Region)), col = 1:7)
+```
+
+Same plot but just for 2010, for better visibility
+
+```{r}
+DF2010 = DF[DF$Year==2010,]
+plot(log(DF2010$StillBirthRate), DF2010$LEx, col=factor(DF2010$Region), main = "2010 Stillbirth Rate vs Life Expectancy", 
+     xlab = "Log(Still births per 1000 total births)", ylab = "Life Expectancy")
+text(rep(1.2,7), seq(62,44,by=-3), levels(factor(DF$Region)), col = 1:7)
+```
+  
+The correlation between stillbirths and life expectancy is clear, although Sub-Saharan Africa is less correlated on its own.  
+
+```{r, fig.height=3, fig.width=4}
+plot(log(DF$PctHealthExp), DF$LEx,col=factor(DF$Region), main = "Percent Health Expenditure vs Life Expectancy, 2000-2015", 
+     xlab="Log(Pct of Govt Expenditures on Healthcare)", ylab = "Life Expectancy", xlim=c(0.2,4))
+text(rep(3.5,7), seq(55,37,by=-3), levels(factor(DF$Region)), col = 1:7)
+```
+
+Take a look at that one leverage point on the right, with high health expenditures but low life expectancy.  
+
+```{r}
+DF[DF$PctHealthExp > 30,]
+```
+The life expectancy is normal for the region, but the health expenditure rate isn't.  Is it possibly a bad number?  
+
+```{r}
+DF[DF$CountryName=='Sao Tome and Principe', c("Year","PctHealthExp")]
+```
+
+It seems very unlikely, the 31.96%, and I'd probably change it to the still-unlikely but much more likely 2005 number of 11.52%.  
+
+```{r, fig.width=5, fig.height=3}
+plot(DF$LEx ~ factor(DF$IncomeGroup), main = "Life Expectancy by Country's Income Group", xlab='', ylab='Years')
+```
+
+What are those few countries with extremely low Life Expectancies for Upper middle income?  
+
+```{r}
+LowerLife = DF[(DF$IncomeGroup=="Upper middle income") & (DF$LEx < 61), ]
+LowerLife
+```
+This is a regional effect, in the Upper middle income countries of the southern half of Africa.
+
+### Make an extra column for Year as factor, in case it differs in any model from Year as numeric.  Also scale years for graphing and modeling as numeric.  
+
+```{r}
+DF["YearFactor"] = factor(DF$Year)
+DF["YearScaled"] = (DF$Year - 2000) / 5 + 1
+```
+
+### Make DeathsMale and DeathsFemale be in proportion to PopMale and PopFemale  
+
+```{r}
+DF["MaleDeathRate"] = DF$DeathsMale / DF$PopMale
+DF["FemaleDeathRate"] = DF$DeathsFemale / DF$PopFemale
+```
+
+
+See how male death rate vs female death rate, per country per year, colored by region, correlates with life expectancy.  
+
+```{r, fig.height=6, fig.width=3}
+par(mfrow=c(2,1))
+DF2000 = DF[DF$Year==2000,]
+DF2015 = DF[DF$Year==2015,]
+plot(DF2000$MaleDeathRate, DF2000$FemaleDeathRate, col=factor(DF2000$Region), cex=(DF2000$LEx/69)**3,
+     main = "Male vs Female Death Rates, in 2000", xlab="Male Death Rate", ylab="Female Death Rate", xlim=c(0.01,0.095), ylim=c(0.01, 0.095))
+text(rep(.08,7), seq(.034,.01,by=-.004), levels(factor(DF$Region)), col = 1:7, cex=0.8)
+text(0.04,0.08,"--Larger circles have higher life expectancies", cex=0.6)
+text(0.04,0.078,"--Diagonal line is average ratio for 2000", cex=0.6)
+abline(0,mean(DF2000$FemaleDeathRate / DF2000$MaleDeathRate))
+plot(DF2015$MaleDeathRate, DF2015$FemaleDeathRate, col=factor(DF2000$Region), cex=(DF2000$LEx/69)**3,
+     main = "Male vs Female Death Rates, in 2015", xlab="Male Death Rate", ylab="Female Death Rate")
+text(rep(.065,7), seq(.029,.011,by=-.003), levels(factor(DF$Region)), col = 1:7, cex = 0.8)
+text(0.03,0.06,"--Larger circles have higher life expectancies", cex=0.6)
+text(0.03,0.058,"--Diagonal line is average ratio for 2015", cex=0.6)
+abline(0,mean(DF2015$FemaleDeathRate / DF2015$MaleDeathRate))
+```
+
+
+The Sub-Saharan countries are the most numerous and thus the average ratio line fits them closely, since the average is not weighted by population.  The (red) Europe & Central Asia countries generally have higher than average proportions of women dying than men, especially in the countries with higher life expectancies (larger circles), and moreso in 2015 than in 2000.  It's hard to know how to interpret this, especially without any indications of causation between the predictors and response.  Higher rates of women dying, relative to men, should of course mean relatively lower population in the future, but we don't know the ages of the women dying in relatively higher numbers, and there's no obvious reason that life expectancies would be influenced one way or the other, regardless.  For what it's worth, Latin America & Caribbean region countries are following the opposite gender trend over time.  Their death rates are lower overall than the Europe & Central Asia region, incidentally, so they probably have a younger average age.
+
+
+## Build Models  
+
+```{r}
+library(lme4)
+library(geepack)
+```
+
+Give every country its own intercept as a starter
+
+```{r}
+mod1 = lmer(LEx ~ 1 + (1 | CountryName), data = DF)
+summary(mod1)
+```
+
+It's easy to explain a lot of the overall variance when you let Random Effects give every country its own intercept, but even so, we can see how the ICC is about 91% here ($\frac{83.7}{83.7+7.4}$), meaning that the 4 Life Expectancy measurements for each country are very correlated with themselves, as expected.  
+
+If we also give every country a slope based on a useful predictor, such as Percent Expenditures on Health, we'll get an even better fit.  In the following mixed effects model, we'll fit PctHealthExp with a fixed parameter for all countries, but then we'll also allow the model to use a single random parameter to describe a distribution of slopes from which each country gets an extra term to help describe the remaining variance that the fixed parameter didn't account for.
+
+
+```{r}
+mod2 = lmer(LEx ~ PctHealthExp + (PctHealthExp | CountryName), data = DF)
+summary(mod2)
+```
+
+The random intercepts are still explaining the bulk of the variance in the response, but that variance is only 64.7 now, compared to 83.7 without a slope in the previous model.  The fixed effect intercept of mod1 was 68.3, which is the unweighted mean of life expectancies for all rows of our data, whereas in mod2, that fixed parameter is now 64.1, and our predictor, PctHealthExp, adds .39 years of life expectancy for every one percentage increase.  
+
+We can now add the Year of measurement to help explain some of the remaining variance.  We saw how almost every country's life expectancy is increasing over time, so we can let the mixed model fit a fixed parameter that describes how all countries' rates are changing over time, and let it interact with PctHealthExp as well.  
+
+```{r}
+mod3 = lmer(LEx ~ PctHealthExp * YearScaled  + (1 + PctHealthExp | CountryName), data = DF)
+summary(mod3)
+```
+
+The interquartile range of the scaled residuals has shrunk in closer to a zero median value, although the min and max residuals are larger now.   
+
+```{r}
+plot(ranef(mod3))
+```
+
+```{r}
+plot(mod3)
+```
+
+```{r}
+mod3.1 = lmer(LEx ~ PctHealthExp * StillBirthRate  + (1 + YearScaled | CountryName), data = DF)
+summary(mod3.1)
+```
+
+First fit without the fixed region effect, to compare the estimated variance of random intercepts before and after
+
+```{r}
+mod3.2a = lmer(LEx ~  YearScaled + StillBirthRate + (1 + YearScaled | CountryName), data = DF)
+summary(mod3.2a)
+```
+
+```{r}
+mod3.2 = lmer(LEx ~  YearScaled + StillBirthRate + Region + (1 + YearScaled | CountryName), data = DF)
+summary(mod3.2)
+```
+
+```{r}
+plot(mod3.2, col='black', xlab="Fitted Values", ylab="Pearson Residuals", cex=0.5)
+```
+
+```{r}
+plot(ranef(mod3.2), col='black', main='Random Effects')
+```
+```{r}
+qqnorm(ranef(mod3.2)$CountryName$YearScaled)
+abline(0,1)
+```
+
+```{r}
+DF$FemaleMaleDeathRatio = DF$FemaleDeathRate / DF$MaleDeathRate
+mod3.3 = lmer(LEx ~  YearScaled + StillBirthRate  + `HIV/AIDS` + Schooling +
+                 (1 + YearScaled | CountryName), data = DF)
+summary(mod3.3)
+```
+
+```{r}
+par(pty='s')
+qqnorm(ranef(mod3.3)$CountryName$YearScaled)
+abline(0,1)
+```
+
+```{r}
+plot(mod3.3, col='black', xlab="Fitted Values", ylab="Pearson Residuals", cex=0.5)
+```
+
+
+
+Compare these lme4 models to nlme ones  
+
+```{r}
+library(nlme)
+
+mod4 = lme(LEx ~ YearScaled + StillBirthRate + Region, data = DF, random = ~1| CountryName / YearScaled)
+summary(mod4)
+```
+```{r}
+plot(mod4)
+```
+
+```{r}
+str(mod4)
+```
+
+
+```{r, fig.height=8, fig.width=4}
+str(ranef(mod4))
+```
+
+```{r, fig.height=9, fig.width=3}
+plot(ranef(mod4), cex=0.3)
+```
+
+```{r}
+plot(ranef(mod4)$YearScaled[bunches,], xlab="Country", ylab="Random Effects for Year", xaxt='n', cex=0.5)
+#plot(ranef(mod4)$YearScaled[order()])
+```
+```{r}
+qqnorm(ranef(mod3.2)$YearScaled)
+```
+
+
+
+```{r}
+inds = sample(seq(1,672,4), 168, replace = F)
+bunches = c()
+for (i in inds){
+  bunches = c(bunches, i:(i+3))
+}
+#bunches
+```
+
+
+
+
+
+
+```{r}
+mod4.1 = lme(LEx ~ YearScaled + StillBirthRate + Region, data = DF, random = ~1| CountryName)
+summary(mod4.1)
+```
+```{r, fig.height=9, fig.width=3}
+plot(ranef(mod4.1), cex=0.3)
+```
+
+
+
+The life expectancies aren't independent of each other.  Specifically, we see above that countries in the same geographic region share similar traits.  Then within each region, each country of course has its own tendencies, such that its four rows of data are generally closer to each other than to any other rows of data.  Furthermore, at an even more nested level, the 2000, 2005, 2010, and 2015 values for responses (and perhaps predictors) follow a similar directional trend across each country, in general.  
+
+There are several ways to deal with these dependencies between variables, including introducing random effects into our models, but before we try that, let's try to fit a marginal model to the data.  The idea behind using a marginal model is that the residual errors for a linear model fit to all countries should have some kind of dependency, or non-zero covariance, within each country.  Since our data are gathered over a number of years, it's likely that the errors for each country follow an auto-regressive pattern, such that errors from 2015 are more correlated with errors from 2010 than those from 2000.
+
+We need to sort each country by date first, to ensure that the model captures the autocorrelation in the right direction.  
+
+```{r}
+DF = DF[order(DF$CountryName, DF$Year),]
+```
+
+```{r}
+geemod0 = geeglm(LEx ~ StillBirthRate + YearScaled + factor(Region),
+                 data = DF, id = factor(CountryName), corstr = "ar1")
+```
+
+```{r}
+summary(geemod0)
+```
+
+$
+
+```{r}
+plot(geemod0)
+```
+```{r}
+geemod0.1 = geeglm(LEx ~ StillBirthRate + YearScaled,
+                 data = DF, id = factor(CountryName), corstr = "ar1")
+summary(geemod0.1)
+```
+
+```{r}
+anova(geemod0.1, geemod0)
+```
+
+The addition of Region as a predictor is highly significant to the marginal model, even though its value is the same for all four measurements within each Country.  
+
+
